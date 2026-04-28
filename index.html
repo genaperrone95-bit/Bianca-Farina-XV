@@ -729,26 +729,29 @@
       sparklesEl.appendChild(s);
     }
 
-    // ── Supabase ────────────────────────────────────────────────
+    // ── Cloudinary config ───────────────────────────────────────
+    const CLOUD_NAME   = 'du8qa741p';
+    const UPLOAD_PRESET = 'ml_default'; // Cambialo a Unsigned en Cloudinary
+
+    // ── Supabase (solo para guardar URLs y realtime) ────────────
     const SUPABASE_URL = 'https://wbnjfkygwmyaoertyyef.supabase.co';
     const SUPABASE_KEY = 'sb_publishable_aDHyXLdWVK4FRhZrNp8_6A_wugpB2gs';
-    const BUCKET = 'FOTOS';
 
     const { createClient } = supabase;
     const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 
     // ── Referencias al DOM ──────────────────────────────────────
-    const dropZone        = document.getElementById('dropZone');
-    const fileInputCamera = document.getElementById('fileInputCamera');
+    const dropZone         = document.getElementById('dropZone');
+    const fileInputCamera  = document.getElementById('fileInputCamera');
     const fileInputGallery = document.getElementById('fileInputGallery');
-    const uploadBtn       = document.getElementById('uploadBtn');
-    const progressBar     = document.getElementById('progressBar');
-    const progressWrap    = document.getElementById('progressWrap');
-    const statusMsg       = document.getElementById('statusMsg');
-    const nameInput       = document.getElementById('nameInput');
-    const gallery         = document.getElementById('gallery');
-    const countEl         = document.getElementById('photoCount');
-    const previewEl       = document.getElementById('preview');
+    const uploadBtn        = document.getElementById('uploadBtn');
+    const progressBar      = document.getElementById('progressBar');
+    const progressWrap     = document.getElementById('progressWrap');
+    const statusMsg        = document.getElementById('statusMsg');
+    const nameInput        = document.getElementById('nameInput');
+    const gallery          = document.getElementById('gallery');
+    const countEl          = document.getElementById('photoCount');
+    const previewEl        = document.getElementById('preview');
 
     let selectedFile = null;
 
@@ -759,6 +762,11 @@
     }
 
     function showPreview(file) {
+      // Límite de 15 MB
+      if (file.size > 15 * 1024 * 1024) {
+        setStatus('La foto es muy grande (máx 15 MB). Probá con otra.', 'error');
+        return;
+      }
       selectedFile = file;
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -807,7 +815,7 @@
       if (fileInputGallery.files[0]) showPreview(fileInputGallery.files[0]);
     });
 
-    // ── Subir foto ──────────────────────────────────────────────
+    // ── Subir foto a Cloudinary + guardar URL en Supabase ───────
     uploadBtn.addEventListener('click', async () => {
       if (!selectedFile) {
         setStatus('Elegí una foto primero.', 'error');
@@ -827,20 +835,38 @@
       }
       nameInput.classList.remove('error');
 
-      const ext = selectedFile.name.split('.').pop();
-      const filename = Date.now() + '_' + Math.random().toString(36).slice(2) + '.' + ext;
-
       uploadBtn.disabled = true;
       progressWrap.style.display = 'block';
-      progressBar.style.width = '30%';
+      progressBar.style.width = '20%';
       setStatus('Subiendo foto...', 'info');
 
-      const { error: uploadError } = await sb.storage
-        .from(BUCKET)
-        .upload(filename, selectedFile, { cacheControl: '3600', upsert: false });
+      // 1. Subir a Cloudinary
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+      formData.append('upload_preset', UPLOAD_PRESET);
+      formData.append('folder', 'bianca15');
 
-      if (uploadError) {
-        setStatus('Error al subir: ' + uploadError.message, 'error');
+      let cloudUrl = null;
+      let publicId = null;
+
+      try {
+        const res = await fetch(
+          `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`,
+          { method: 'POST', body: formData }
+        );
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error?.message || 'Error al subir a Cloudinary');
+        }
+
+        const data = await res.json();
+        // URL optimizada: calidad automática + formato moderno
+        cloudUrl = data.secure_url.replace('/upload/', '/upload/q_auto,f_auto/');
+        publicId = data.public_id;
+
+      } catch (err) {
+        setStatus('Error al subir: ' + err.message, 'error');
         progressWrap.style.display = 'none';
         uploadBtn.disabled = false;
         return;
@@ -848,13 +874,11 @@
 
       progressBar.style.width = '70%';
 
-      const { data: urlData } = sb.storage.from(BUCKET).getPublicUrl(filename);
-      const url = urlData.publicUrl;
-
+      // 2. Guardar URL en Supabase (solo texto, pesa casi nada)
       const { error: dbError } = await sb.from('FOTOS').insert({
-        url,
+        url: cloudUrl,
         nombre,
-        filename,
+        filename: publicId,
         created_at: new Date().toISOString()
       });
 
@@ -867,7 +891,7 @@
       if (dbError) {
         setStatus('Error al registrar: ' + dbError.message, 'error');
       } else {
-        setStatus('¡Foto subida!', 'success');
+        setStatus('¡Foto subida! 🎉', 'success');
         setTimeout(() => setStatus('', ''), 3000);
         selectedFile = null;
         fileInputCamera.value = '';
@@ -903,8 +927,9 @@
       `).join('');
     }
 
+    // Realtime: cuando alguien sube una foto, la galería se actualiza sola
     sb.channel('fotos-live')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'fotos' }, () => loadPhotos())
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'FOTOS' }, () => loadPhotos())
       .subscribe();
 
     loadPhotos();
