@@ -970,11 +970,91 @@
       `).join('');
     }
 
+// ── Admin ────────────────────────────────────────────────────
+    const ADMIN_KEY = 'Gena2026XV'; // 🔑 Cambiá esta clave por la tuya
+    let adminMode = false;
+ 
+    const adminToggle   = document.getElementById('adminToggle');
+    const adminModal    = document.getElementById('adminModal');
+    const adminKeyInput = document.getElementById('adminKeyInput');
+    const adminError    = document.getElementById('adminError');
+    const adminConfirm  = document.getElementById('adminConfirmBtn');
+    const adminCancel   = document.getElementById('adminCancelBtn');
+ 
+    adminToggle.addEventListener('click', () => {
+      if (adminMode) {
+        // Desactivar modo admin
+        adminMode = false;
+        document.body.classList.remove('admin-mode');
+        adminToggle.classList.remove('active');
+        adminToggle.textContent = '🔑';
+      } else {
+        // Abrir modal para pedir clave
+        adminModal.classList.add('open');
+        adminKeyInput.value = '';
+        adminError.textContent = '';
+        setTimeout(() => adminKeyInput.focus(), 100);
+      }
+    });
+ 
+    adminConfirm.addEventListener('click', checkAdminKey);
+    adminKeyInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') checkAdminKey(); });
+ 
+    function checkAdminKey() {
+      if (adminKeyInput.value === ADMIN_KEY) {
+        adminMode = true;
+        document.body.classList.add('admin-mode');
+        adminToggle.classList.add('active');
+        adminToggle.textContent = '🔒 salir';
+        adminModal.classList.remove('open');
+      } else {
+        adminError.textContent = 'Clave incorrecta';
+        adminKeyInput.value = '';
+        adminKeyInput.focus();
+      }
+    }
+ 
+    adminCancel.addEventListener('click', () => {
+      adminModal.classList.remove('open');
+    });
+ 
+    async function deletePhoto(id, filename, btn) {
+      if (!adminMode) return;
+      if (!confirm('¿Eliminar esta foto?')) return;
+ 
+      btn.disabled = true;
+      btn.textContent = '…';
+ 
+      // Borrar de Supabase
+      const { error } = await sb.from('FOTOS').delete().eq('id', id);
+      if (error) {
+        alert('Error al eliminar: ' + error.message);
+        btn.disabled = false;
+        btn.textContent = '×';
+        return;
+      }
+ 
+      // Sacar el elemento de la galería
+      const item = btn.closest('.photo-item');
+      item.style.opacity = '0';
+      item.style.transition = 'opacity 0.3s';
+      setTimeout(() => {
+        item.remove();
+        // Actualizar arrays
+        photosData = photosData.filter(f => f.id != id);
+        photoUrls = photosData.map(f => f.url);
+        countEl.textContent = photosData.length;
+        if (photosData.length === 0) {
+          gallery.innerHTML = '<p class="gallery-empty">Las fotos de la noche aparecerán aquí</p>';
+        }
+      }, 300);
+    }
+ 
     // Realtime: cuando alguien sube una foto, la galería se actualiza sola
     sb.channel('fotos-live')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'FOTOS' }, () => loadPhotos())
       .subscribe();
-
+ 
     loadPhotos();
 
     // ── Lightbox ────────────────────────────────────────────────
